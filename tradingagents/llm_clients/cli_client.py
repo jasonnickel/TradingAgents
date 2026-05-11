@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.runnables import Runnable
 
 from .base_client import BaseLLMClient
 from .validators import validate_model
@@ -58,8 +59,14 @@ def _parse_structured_json(raw: str) -> Any:
         return json.loads(text[start : end + 1])
 
 
-class CLIChatModel:
-    """Small LangChain-like adapter for non-interactive local agent CLIs."""
+class CLIChatModel(Runnable[Any, AIMessage]):
+    """Small LangChain-like adapter for non-interactive local agent CLIs.
+
+    Subclasses :class:`langchain_core.runnables.Runnable` so the standard
+    ``prompt | llm.bind_tools(...)`` pipe pattern composes correctly in
+    LangGraph chains. Without that base, the pipe operator rejects the
+    instance with "unsupported type" even though it implements ``invoke``.
+    """
 
     is_cli_llm = True
 
