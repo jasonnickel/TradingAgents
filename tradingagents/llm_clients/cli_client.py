@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -14,6 +16,22 @@ from langchain_core.runnables import Runnable
 
 from .base_client import BaseLLMClient
 from .validators import validate_model
+
+
+def _emit_timing(event: str, **fields: Any) -> None:
+    """Emit a single [TIMING] line to stderr for the verdict-agent runner to capture.
+
+    Stderr is the right channel because: (a) stdout is reserved for the runner's
+    final JSON payload, and (b) the parent verdict_agent.py writes stderr to a
+    per-ticker artifacts log so we can audit pacing after a successful run, not
+    only on failure. Format is single-line key=value so a quick `grep TIMING`
+    over the log reproduces the timeline.
+    """
+    parts = [f"[TIMING] {event}"]
+    for key, value in fields.items():
+        parts.append(f"{key}={value}")
+    sys.stderr.write(" ".join(parts) + "\n")
+    sys.stderr.flush()
 
 
 def _schema_for_model(schema: Any) -> dict[str, Any]:
@@ -86,7 +104,24 @@ class CLIChatModel(Runnable[Any, AIMessage]):
 
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> AIMessage:
         prompt = self._input_to_prompt(input)
-        return AIMessage(content=self._run_cli(prompt))
+        start = time.monotonic()
+        _emit_timing(
+            "invoke_start",
+            provider=self.provider,
+            model=self.model,
+            effort=self.effort or "default",
+            prompt_chars=len(prompt),
+        )
+        try:
+            content = self._run_cli(prompt)
+        finally:
+            _emit_timing(
+                "invoke_end",
+                provider=self.provider,
+                model=self.model,
+                elapsed_s=f"{time.monotonic() - start:.2f}",
+            )
+        return AIMessage(content=content)
 
     def bind_tools(self, tools: Any) -> "CLIChatModel":
         return self
@@ -196,14 +231,34 @@ class CLIChatModel(Runnable[Any, AIMessage]):
         return self._run_command(cmd, input_text=prompt)
 
     def _run_command(self, cmd: list[str], input_text: Optional[str] = None) -> str:
-        result = subprocess.run(
-            cmd,
-            cwd=self.cwd,
-            input=input_text,
-            text=True,
-            capture_output=True,
-            timeout=self.timeout,
-            check=False,
+        bin_name = cmd[0] if cmd else "?"
+        start = time.monotonic()
+        _emit_timing("subprocess_start", bin=bin_name, model=self.model)
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=self.cwd,
+                input=input_text,
+                text=True,
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            _emit_timing(
+                "subprocess_timeout",
+                bin=bin_name,
+                elapsed_s=f"{time.monotonic() - start:.2f}",
+                timeout_s=self.timeout,
+            )
+            raise
+        elapsed = time.monotonic() - start
+        _emit_timing(
+            "subprocess_end",
+            bin=bin_name,
+            rc=result.returncode,
+            elapsed_s=f"{elapsed:.2f}",
+            stdout_chars=len(result.stdout or ""),
         )
         if result.returncode != 0:
             stderr = result.stderr.strip()
