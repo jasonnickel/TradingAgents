@@ -32,6 +32,11 @@ PROVIDER_API_KEY_ENV: dict[str, Optional[str]] = {
     "openrouter": "OPENROUTER_API_KEY",
     # Local runtimes do not authenticate.
     "ollama":     None,
+    # CLI-backed providers authenticate via the user's installed CLI
+    # session (Claude Code or Codex CLI). No API key needed; billing
+    # rides on the user's subscription.
+    "claude_cli": None,
+    "codex_cli":  None,
 }
 
 

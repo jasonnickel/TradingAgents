@@ -175,6 +175,38 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("Custom model ID", "custom"),
         ],
     },
+    # Claude CLI and Codex CLI route through the user's locally installed
+    # Claude Code / Codex CLI binaries. They authenticate against the
+    # installed CLI session (no API key required) and bill against the
+    # user's subscription rather than per-token API credits. Model IDs are
+    # CLI shorthand (opus / sonnet / haiku, gpt-5.5 / gpt-5.4) rather than
+    # API IDs.
+    "claude_cli": {
+        "quick": [
+            ("Claude CLI Sonnet - Uses installed Claude Code auth", "sonnet"),
+            ("Claude CLI Haiku - Faster local CLI calls", "haiku"),
+            ("Claude CLI custom model", "custom"),
+        ],
+        "deep": [
+            ("Claude CLI Opus - Strongest local Claude Code model", "opus"),
+            ("Claude CLI Sonnet - Balanced local Claude Code model", "sonnet"),
+            ("Claude CLI custom model", "custom"),
+        ],
+    },
+    "codex_cli": {
+        "quick": [
+            ("Codex CLI GPT-5.5 - Latest frontier model", "gpt-5.5"),
+            ("Codex CLI GPT-5.4 Mini - Faster lower-cost model", "gpt-5.4-mini"),
+            ("Codex CLI GPT-5.4", "gpt-5.4"),
+            ("Codex CLI custom model", "custom"),
+        ],
+        "deep": [
+            ("Codex CLI GPT-5.5 - Latest frontier model", "gpt-5.5"),
+            ("Codex CLI GPT-5.4", "gpt-5.4"),
+            ("Codex CLI GPT-5.2", "gpt-5.2"),
+            ("Codex CLI custom model", "custom"),
+        ],
+    },
 }
 
 
