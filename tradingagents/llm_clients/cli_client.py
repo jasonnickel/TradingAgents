@@ -221,6 +221,11 @@ class CLIChatModel(Runnable[Any, AIMessage]):
         ]
         if self.effort:
             cmd.extend(["--effort", self.effort])
+        # Prompt is routed via stdin, never argv. Linux ARG_MAX caps at
+        # roughly 131 KB and TradingAgents' Social Analyst regularly
+        # accumulates 140 KB+ of news/posts/transcripts; passing prompt
+        # as a positional arg fails with `OSError: Argument list too
+        # long` before claude ever runs. stdin has no comparable limit.
         if schema is not None:
             # `--output-format text` + `--json-schema` silently drops the
             # StructuredOutput tool call and returns empty stdout (rc=0).
@@ -233,12 +238,10 @@ class CLIChatModel(Runnable[Any, AIMessage]):
                 "Do not include markdown fences or explanatory text.\n\n"
                 + prompt
             )
-            cmd.append(prompt)
-            raw = self._run_command(cmd)
+            raw = self._run_command(cmd, input_text=prompt)
             return _extract_structured_output(raw)
         cmd.extend(["--output-format", "text"])
-        cmd.append(prompt)
-        return self._run_command(cmd)
+        return self._run_command(cmd, input_text=prompt)
 
     def _run_codex(self, prompt: str, schema: Optional[dict[str, Any]]) -> str:
         cmd = [
