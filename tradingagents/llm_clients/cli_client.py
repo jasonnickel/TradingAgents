@@ -37,37 +37,49 @@ def _emit_timing(event: str, **fields: Any) -> None:
 def _extract_structured_output(raw: str) -> str:
     """Pull the structured_output payload out of a `claude --output-format json` envelope.
 
-    The envelope is a JSON array of events; the final `type=result` event
-    carries the schema-validated dict under `structured_output`. Returns
-    that dict re-serialized so the existing `_parse_structured_json` and
-    Pydantic-validate path downstream continue to work unchanged.
+    Claude Code emits two envelope shapes depending on version/mode:
+    - Single object: just the final ``type=result`` event with the
+      schema-validated dict under ``structured_output`` at the top level
+      (homelab CLI 2.x behavior).
+    - Array of events: the full event stream, with the result event at
+      the end carrying ``structured_output`` (Mac CLI 2.1.139 behavior).
+
+    Both are handled here. Returns the dict re-serialized as JSON so the
+    existing ``_parse_structured_json`` + Pydantic ``model_validate``
+    path downstream keeps working unchanged.
     """
     text = raw.strip()
     if not text:
         raise RuntimeError("claude --output-format json returned empty stdout")
     try:
-        events = json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError as exc:
         raise RuntimeError(
             f"claude --output-format json returned non-JSON envelope: {text[:200]!r}"
         ) from exc
-    if not isinstance(events, list):
+    if isinstance(parsed, dict):
+        return _read_structured_from_result_event(parsed)
+    if isinstance(parsed, list):
+        for event in reversed(parsed):
+            if isinstance(event, dict) and event.get("type") == "result":
+                return _read_structured_from_result_event(event)
+        raise RuntimeError("claude --output-format json envelope contained no result event")
+    raise RuntimeError(
+        f"claude --output-format json returned unexpected envelope shape: {type(parsed).__name__}"
+    )
+
+
+def _read_structured_from_result_event(event: dict[str, Any]) -> str:
+    if event.get("is_error"):
         raise RuntimeError(
-            f"claude --output-format json returned unexpected envelope shape: {type(events).__name__}"
+            f"claude --output-format json result is_error=true: {event.get('result', '')[:200]!r}"
         )
-    for event in reversed(events):
-        if isinstance(event, dict) and event.get("type") == "result":
-            if event.get("is_error"):
-                raise RuntimeError(
-                    f"claude --output-format json result is_error=true: {event.get('result', '')[:200]!r}"
-                )
-            structured = event.get("structured_output")
-            if structured is None:
-                raise RuntimeError(
-                    "claude --output-format json result event has no structured_output field"
-                )
-            return json.dumps(structured)
-    raise RuntimeError("claude --output-format json envelope contained no result event")
+    structured = event.get("structured_output")
+    if structured is None:
+        raise RuntimeError(
+            "claude --output-format json result event has no structured_output field"
+        )
+    return json.dumps(structured)
 
 
 def _schema_for_model(schema: Any) -> dict[str, Any]:
