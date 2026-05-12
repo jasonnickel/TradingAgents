@@ -34,6 +34,42 @@ def _emit_timing(event: str, **fields: Any) -> None:
     sys.stderr.flush()
 
 
+def _extract_structured_output(raw: str) -> str:
+    """Pull the structured_output payload out of a `claude --output-format json` envelope.
+
+    The envelope is a JSON array of events; the final `type=result` event
+    carries the schema-validated dict under `structured_output`. Returns
+    that dict re-serialized so the existing `_parse_structured_json` and
+    Pydantic-validate path downstream continue to work unchanged.
+    """
+    text = raw.strip()
+    if not text:
+        raise RuntimeError("claude --output-format json returned empty stdout")
+    try:
+        events = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"claude --output-format json returned non-JSON envelope: {text[:200]!r}"
+        ) from exc
+    if not isinstance(events, list):
+        raise RuntimeError(
+            f"claude --output-format json returned unexpected envelope shape: {type(events).__name__}"
+        )
+    for event in reversed(events):
+        if isinstance(event, dict) and event.get("type") == "result":
+            if event.get("is_error"):
+                raise RuntimeError(
+                    f"claude --output-format json result is_error=true: {event.get('result', '')[:200]!r}"
+                )
+            structured = event.get("structured_output")
+            if structured is None:
+                raise RuntimeError(
+                    "claude --output-format json result event has no structured_output field"
+                )
+            return json.dumps(structured)
+    raise RuntimeError("claude --output-format json envelope contained no result event")
+
+
 def _schema_for_model(schema: Any) -> dict[str, Any]:
     if hasattr(schema, "model_json_schema"):
         raw_schema = schema.model_json_schema()
@@ -169,19 +205,26 @@ class CLIChatModel(Runnable[Any, AIMessage]):
             "--print",
             "--model",
             self.model,
-            "--output-format",
-            "text",
             "--no-session-persistence",
         ]
         if self.effort:
             cmd.extend(["--effort", self.effort])
         if schema is not None:
+            # `--output-format text` + `--json-schema` silently drops the
+            # StructuredOutput tool call and returns empty stdout (rc=0).
+            # The JSON envelope mode delivers the schema-constrained payload
+            # in the final result event's `structured_output` field.
+            cmd.extend(["--output-format", "json"])
             cmd.extend(["--json-schema", json.dumps(schema)])
             prompt = (
                 "Return only valid JSON that satisfies the supplied schema. "
                 "Do not include markdown fences or explanatory text.\n\n"
                 + prompt
             )
+            cmd.append(prompt)
+            raw = self._run_command(cmd)
+            return _extract_structured_output(raw)
+        cmd.extend(["--output-format", "text"])
         cmd.append(prompt)
         return self._run_command(cmd)
 
